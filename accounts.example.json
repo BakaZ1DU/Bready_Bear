@@ -1,0 +1,30 @@
+[
+  {
+    "id": "acct_a",
+    "name": "账号A（主号）",
+    "wxid": "",
+    "phone": "",
+    "enabled": true,
+    "moments_per_day": 4,
+    "group_name": "",
+    "persona": "温柔、专业、像门店店长一样分享烘焙知识和日常",
+    "image_dir": "data/accounts/acct_a/images",
+    "note": "",
+    "role": "poster",
+    "wechat_hwnd": ""
+  },
+  {
+    "id": "acct_b",
+    "name": "账号B（备用）",
+    "wxid": "",
+    "phone": "",
+    "enabled": true,
+    "moments_per_day": 4,
+    "group_name": "",
+    "persona": "亲切、活泼、像烘焙老师一样回答问题",
+    "image_dir": "data/accounts/acct_b/images",
+    "note": "",
+    "role": "bot",
+    "wechat_hwnd": ""
+  }
+]

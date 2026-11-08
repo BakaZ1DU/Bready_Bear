@@ -1,0 +1,15 @@
+# 本地运行数据
+data/
+logs/
+runtime/
+__pycache__/
+*.pyc
+
+# 个人配置（如以后提交 GitHub，请勿提交）
+config.json
+accounts.json
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store

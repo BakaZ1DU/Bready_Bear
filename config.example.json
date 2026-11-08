@@ -1,0 +1,43 @@
+{
+  "site_name": "Bready Bear 烘焙管家",
+  "ui": {
+    "theme": "light",
+    "language": "zh"
+  },
+  "session": {
+    "selected_account": "acct_a"
+  },
+  "startup": {
+    "minimize": false
+  },
+  "image_settle_seconds": 4,
+  "publish_wait_seconds": 35,
+  "ai": {
+    "provider": "deepseek",
+    "api_key": "",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "temperature": 0.8,
+    "timeout": 60
+  },
+  "wechat": {
+    "exe": "",
+    "privacy": "keep",
+    "max_images": 9,
+    "publish_wait_seconds": 35,
+    "failure_check_seconds": 15
+  },
+  "group": {
+    "mode": "current",
+    "background": false
+  },
+  "bot": {
+    "persona_name": "烘焙助手",
+    "persona": "你是烘焙店的 AI 助手，说话自然、简短、专业，先回答问题再给一个可执行的小建议。"
+  },
+  "scheduler": {
+    "check_seconds": 5,
+    "max_retries": 2,
+    "retry_delay_minutes": 10
+  }
+}
