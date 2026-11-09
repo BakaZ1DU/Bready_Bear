@@ -27,6 +27,9 @@ EN = {
     "运行中": "Running",
     "已暂停": "Paused",
     "待发布": "Planned",
+    "等待切换账号": "Waiting to switch account",
+    "待人工核实": "Needs review",
+    "等待人工确认": "Waiting for confirmation",
     "已发布": "Published",
     "发布中": "Publishing",
     "失败": "Failed",
@@ -63,6 +66,10 @@ EN = {
     "要发送的内容": "Message",
     "发送到微信群": "Send to group",
     "AI 生成并发送": "AI generate & send",
+    "AI 生成草稿": "AI draft",
+    "AI 草稿已生成": "AI draft generated",
+    "AI 生成失败": "AI generation failed",
+    "请检查内容、价格、库存与承诺事项。确认无误后点击「发送到微信群」。": "Check the content, price, stock and promises. If correct, click “Send to group”.",
     "运行日志": "Run log",
     "语音播报": "Voice announcements",
     "界面语言": "Interface language",
@@ -230,6 +237,12 @@ EN = {
     "接下来": "Up next",
     "当前群": "Current group",
     "（朋友圈/群消息只执行这个账号）": " (posts/messages use only this account)",
+    "确认已发送": "Confirm sent",
+    "确认未发送": "Confirm not sent",
+    "这条计划不是待核实状态": "This plan is not waiting for review",
+    "确认这条内容已经在微信里发出去了吗？": "Confirm this content was actually sent in WeChat?",
+    "确认这条内容没有发出去吗？": "Confirm this content was not sent?",
+    "确认后会重新排队，可能再次发送，请先检查微信。": "It will be queued again and may be sent. Check WeChat first.",
 }
 
 
@@ -253,6 +266,9 @@ JA = {
     "运行中": "実行中",
     "已暂停": "一時停止中",
     "待发布": "投稿待ち",
+    "等待切换账号": "アカウント切替待ち",
+    "待人工核实": "人による確認待ち",
+    "等待人工确认": "人による確認待ち",
     "已发布": "投稿済み",
     "发布中": "投稿中",
     "失败": "失敗",
@@ -289,6 +305,10 @@ JA = {
     "要发送的内容": "送信内容",
     "发送到微信群": "グループへ送信",
     "AI 生成并发送": "AIで生成して送信",
+    "AI 生成草稿": "AI下書き",
+    "AI 草稿已生成": "AI下書きを作成しました",
+    "AI 生成失败": "AI生成失敗",
+    "请检查内容、价格、库存与承诺事项。确认无误后点击「发送到微信群」。": "内容・価格・在庫・約束事項を確認し、問題なければ「グループへ送信」を押してください。",
     "运行日志": "実行ログ",
     "语音播报": "音声読み上げ",
     "界面语言": "表示言語",
@@ -447,7 +467,88 @@ JA = {
     "停用": "無効",
     "接下来": "次回の予定",
     "（朋友圈/群消息只执行这个账号）": "（このアカウントのみ投稿・送信）",
+    "确认已发送": "送信済みを確認",
+    "确认未发送": "未送信を確認",
+    "这条计划不是待核实状态": "この予定は確認待ちではありません",
+    "确认这条内容已经在微信里发出去了吗？": "この内容がWeChatで実際に送信されたことを確認しますか？",
+    "确认这条内容没有发出去吗？": "この内容が送信されていないことを確認しますか？",
+    "确认后会重新排队，可能再次发送，请先检查微信。": "再予約され、再送信される可能性があります。先にWeChatを確認してください。",
 }
+
+
+EN.update({
+    "AI 群聊": "AI group chat",
+    "AI 群聊回复": "AI group replies",
+    "@ 机器人固定 100% 回复；普通消息按下面的概率随机回复。": "@ mentions always get a 100% reply; normal messages use the probability below.",
+    "普通消息回复概率": "Normal message reply probability",
+    "普通消息回复概率；@ 机器人固定 100%": "Normal message reply probability; @ mentions are always 100%",
+    "机器人昵称": "Bot name",
+    "回复所有消息": "Reply to all messages",
+    "回复所有消息（测试，100%）": "Reply to all messages (test, 100%)",
+    "无感情人设（人机测试）": "Emotionless persona (human-bot test)",
+    "开启后 AI 会改用机械、简短、无情绪的表达，用于人机测试。": "When enabled, AI uses a mechanical, brief, emotionless style for testing.",
+    "示例：概率 30% 表示普通消息约三成会回；@ 机器人不受概率限制。": "Example: 30% means about three in ten normal messages get a reply; @ mentions ignore probability.",
+    "保存 AI 群聊设置": "Save AI group settings",
+    "AI 群聊回复概率已保存。@ 机器人仍固定 100%。": "AI reply probability saved. @ mentions remain 100%.",
+    "AI 群聊监听（测试）": "AI group listener (test)",
+    "用 Windows OCR 读取当前群最后一条消息；测试阶段只对 @、昵称或“回复所有”触发。": "Reads the last message in the current group with Windows OCR; in tests it triggers only on @, the bot name, or “reply all”.",
+    "开始监听": "Start listening",
+    "停止监听": "Stop listening",
+    "未监听": "Not listening",
+    "监听中…": "Listening…",
+    "监听中 · 基线：": "Listening · baseline: ",
+    "收到：": "Received: ",
+    "已回复：": "Replied: ",
+    "监听失败：": "Listen failed: ",
+    "绑定微信窗口": "Bind WeChat window",
+    "账号：": "Account: ",
+    "微信号：": "WeChat ID: ",
+    "未填写": "Not filled",
+    "点“开始选择”后，5 秒内点一下这个微信号登录的微信窗口。\n窗口绑定只在本次运行有效，关闭软件后不保存。": "Click “Start selection”, then click the WeChat window logged in as this account within 5 seconds.\nThe binding is only valid for this run and is not saved after closing.",
+    "开始选择": "Start selection",
+    "本次运行已绑定该微信窗口。\n关闭软件后窗口绑定会清空，需要重新选择。": "This WeChat window is bound for this run.\nThe binding is cleared when the app closes; select it again next time.",
+    "没有读取到微信窗口。请重新选择，并在 5 秒内点击目标微信窗口。": "No WeChat window detected. Try again and click the target WeChat window within 5 seconds.",
+    "请在 ": "Please click the target WeChat window within ",
+    " 秒内点击目标微信窗口…": " seconds…",
+    "退出前保存 API 和设置吗？\n\n是：保存\n否：不保存\n取消：不退出": "Save API and settings before exiting?\n\nYes: save\nNo: do not save\nCancel: stay",
+})
+
+JA.update({
+    "AI 群聊": "AIグループチャット",
+    "AI 群聊回复": "AIグループ返信",
+    "@ 机器人固定 100% 回复；普通消息按下面的概率随机回复。": "@は常に100%返信。通常メッセージは下の確率で返信します。",
+    "普通消息回复概率": "通常メッセージ返信確率",
+    "普通消息回复概率；@ 机器人固定 100%": "通常メッセージ返信確率；@は常に100%",
+    "机器人昵称": "ボット名",
+    "回复所有消息": "すべてのメッセージに返信",
+    "回复所有消息（测试，100%）": "すべてのメッセージに返信（テスト、100%）",
+    "无感情人设（人机测试）": "感情なし人格（人機テスト）",
+    "开启后 AI 会改用机械、简短、无情绪的表达，用于人机测试。": "有効にすると、機械的で短く感情のない表現になります。",
+    "示例：概率 30% 表示普通消息约三成会回；@ 机器人不受概率限制。": "例：30%は通常メッセージの約3割に返信。@は確率の対象外です。",
+    "保存 AI 群聊设置": "AIグループ設定を保存",
+    "AI 群聊回复概率已保存。@ 机器人仍固定 100%。": "AI返信確率を保存しました。@は100%のままです。",
+    "AI 群聊监听（测试）": "AIグループリスナー（テスト）",
+    "用 Windows OCR 读取当前群最后一条消息；测试阶段只对 @、昵称或“回复所有”触发。": "Windows OCRで現在のグループの最後のメッセージを読み取ります。テストでは@・ボット名・「全員返信」のみ反応します。",
+    "开始监听": "監視開始",
+    "停止监听": "監視停止",
+    "未监听": "監視していません",
+    "监听中…": "監視中…",
+    "监听中 · 基线：": "監視中 · ベースライン：",
+    "收到：": "受信：",
+    "已回复：": "返信済み：",
+    "监听失败：": "監視失敗：",
+    "绑定微信窗口": "WeChatウィンドウを接続",
+    "账号：": "アカウント：",
+    "微信号：": "WeChat ID：",
+    "未填写": "未入力",
+    "点“开始选择”后，5 秒内点一下这个微信号登录的微信窗口。\n窗口绑定只在本次运行有效，关闭软件后不保存。": "「選択開始」を押し、5秒以内にこのアカウントでログインしたWeChatウィンドウをクリックしてください。\n接続は今回の起動中のみ有効で、終了後は保存されません。",
+    "开始选择": "選択開始",
+    "本次运行已绑定该微信窗口。\n关闭软件后窗口绑定会清空，需要重新选择。": "このWeChatウィンドウを今回の起動に接続しました。\n終了すると接続は消去されます。次回は再選択してください。",
+    "没有读取到微信窗口。请重新选择，并在 5 秒内点击目标微信窗口。": "WeChatウィンドウを取得できません。もう一度、5秒以内に対象ウィンドウをクリックしてください。",
+    "请在 ": "対象のWeChatウィンドウを ",
+    " 秒内点击目标微信窗口…": " 秒以内にクリックしてください…",
+    "退出前保存 API 和设置吗？\n\n是：保存\n否：不保存\n取消：不退出": "終了前にAPIと設定を保存しますか？\n\nはい：保存\nいいえ：保存しない\nキャンセル：終了しない",
+})
 
 
 def set_lang(lang: str) -> None:
@@ -734,6 +835,24 @@ def display_account(name: str) -> str:
             src = "アカウント" + src[2:]
         return src
     return name
+
+
+PHRASES_EN.update({
+    "监听中 · 基线：": "Listening · baseline: ",
+    "监听失败：": "Listen failed: ",
+    "收到：": "Received: ",
+    "已回复：": "Replied: ",
+    "请在 ": "Please click the target WeChat window within ",
+    " 秒内点击目标微信窗口…": " seconds…",
+})
+PHRASES_JA.update({
+    "监听中 · 基线：": "監視中 · ベースライン：",
+    "监听失败：": "監視失敗：",
+    "收到：": "受信：",
+    "已回复：": "返信済み：",
+    "请在 ": "対象のWeChatウィンドウを ",
+    " 秒内点击目标微信窗口…": " 秒以内にクリックしてください…",
+})
 
 
 def tr_runtime(text: str) -> str:

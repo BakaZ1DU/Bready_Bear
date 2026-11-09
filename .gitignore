@@ -4,6 +4,8 @@ logs/
 runtime/
 __pycache__/
 *.pyc
+.pytest_cache/
+.venv/
 
 # 个人配置（如以后提交 GitHub，请勿提交）
 config.json

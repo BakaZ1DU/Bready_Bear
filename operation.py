@@ -27,11 +27,12 @@ class OperationGate:
             self._cond.notify_all()
 
     def begin_robot(self) -> bool:
-        """机器人回复优先：先登记等待，等正在进行的自动发送结束后占用。"""
+        """机器人操作互斥；机器人任务可等待已在运行的自动任务。"""
         with self._cond:
             self._robot_waiting += 1
             try:
-                while self._auto_running:
+                # 必须同时检查自动任务和其他机器人任务。
+                while self._auto_running or self._robot_running:
                     self._cond.wait(timeout=1.0)
                 self._robot_running = True
                 return True

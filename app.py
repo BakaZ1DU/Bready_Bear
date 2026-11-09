@@ -21,6 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 import store
 import i18n
 from ai import DeepSeekClient
+from chat_listener import GroupChatListener
 from group_ui import GroupUI
 from operation import GATE
 from scheduler import Scheduler
@@ -30,7 +31,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def _install_i18n_messagebox() -> None:
-    for name in ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel"):
+    for name in ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel", "askyesnocancel"):
         orig = getattr(messagebox, name, None)
         if not orig or getattr(orig, "_bready_i18n", False):
             continue
@@ -85,10 +86,15 @@ class App(tk.Tk):
             pass
         self.cfg = store.load_config()
         store.ensure_dirs()
+        interrupted_count = store.reset_interrupted()
+        if interrupted_count:
+            store.log("WARNING", f"检测到 {interrupted_count} 条中断任务，已标记为待人工核实")
         self.accounts = store.load_accounts()
         self.selected_id = store.selected_account_id(self.accounts)
         self.ai = DeepSeekClient(self.cfg)
         self.scheduler = Scheduler(self.cfg)
+        self.window_bindings: dict[str, int] = {}
+        self.scheduler.window_bindings = self.window_bindings
         self.theme_name = self.cfg.get("ui", {}).get("theme", "light")
         i18n.set_lang(self.cfg.get("ui", {}).get("language", "zh"))
         self.title(f"Bready Bear · {i18n.tr('烘焙内容管家')}")
@@ -244,6 +250,7 @@ class App(tk.Tk):
         self.pages["persona"] = self._build_persona(self.content)
         self.pages["test"] = self._build_test(self.content)
         self.pages["prefs"] = self._build_prefs(self.content)
+        self.pages["listener"] = self._build_listener_settings(self.content)
         self.pages["accounts"] = self._build_accounts(self.content)
         self.pages["settings"] = self._build_settings(self.content)
         self.show_page(self.page)
@@ -257,7 +264,7 @@ class App(tk.Tk):
             pass
 
     def show_page(self, key: str):
-        if key in ("developer", "accounts", "settings", "persona", "test") and not getattr(self, "dev_unlocked", False):
+        if key in ("developer", "accounts", "settings", "persona", "test", "listener") and not getattr(self, "dev_unlocked", False):
             if not messagebox.askokcancel(
                 "开发者设置",
                 "这里会修改账号、API、人设和测试，普通使用者不要乱改。\n确定进入开发者设置吗？",
@@ -282,6 +289,7 @@ class App(tk.Tk):
                   "developer": ("开发者", "账号、API、人设都在这里；普通使用不需要进来"),
                   "persona": ("机器人人设", "只写是谁、什么性格、怎么说话"),
                   "test": ("测试", "测试发送消息、朋友圈、DeepSeek 人设"),
+                  "listener": ("AI 群聊", "普通消息回复概率；@ 机器人固定 100%"),
                   "accounts": ("账号与角色", "运营账号 / 机器人账号"),
                   "settings": ("API 设置", "DeepSeek API")}
         self.page_title.configure(text=titles[key][0])
@@ -302,6 +310,8 @@ class App(tk.Tk):
             pass
         elif key == "prefs":
             self._refresh_prefs()
+        elif key == "listener":
+            self._refresh_listener_settings()
         elif key == "accounts":
             self._refresh_account_cards()
         elif key == "settings":
@@ -472,6 +482,10 @@ class App(tk.Tk):
         rowb.pack(fill="x", padx=16)
         self._btn(rowb, "立即发布", lambda: self.run_plan(self.current_plan), "ghost").pack(side="left", fill="x", expand=True)
         self._btn(rowb, "删除", self.delete_current_plan, "danger").pack(side="left", padx=(6, 0))
+        rowb2 = tk.Frame(right, bg=p["card"])
+        rowb2.pack(fill="x", padx=16, pady=(4, 0))
+        self._btn(rowb2, "确认已发送", self.confirm_plan_sent, "ghost").pack(side="left")
+        self._btn(rowb2, "确认未发送", self.confirm_plan_not_sent, "ghost").pack(side="left", padx=6)
         self.auto_hint = tk.Label(right, text="朋友圈和群消息都在这里排队；内容必须手写，程序不自动生成。", bg=p["card"], fg=p["muted"],
                                   font=("Microsoft YaHei UI", 8), wraplength=320, justify="left")
         self.auto_hint.pack(anchor="w", padx=16, pady=(6, 8))
@@ -678,7 +692,7 @@ class App(tk.Tk):
                 fields = dict(account_id=account_id, kind=store.KIND_GROUP,
                               scheduled_at=when.isoformat(timespec="seconds"), text=text,
                               group=group, images=[], status=store.STATUS_PLANNED, last_error="")
-                plan = store.update_plan(self.current_plan["id"], **fields) if self.current_plan else \
+                plan = store.update_plan_if_editable(self.current_plan["id"], **fields) if self.current_plan else \
                     store.create_plan(account_id, store.KIND_GROUP, when, text, group=group, source="manual")
                 self.moment_images = []
             else:
@@ -687,12 +701,12 @@ class App(tk.Tk):
                 fields = dict(account_id=account_id, kind=store.KIND_MOMENT,
                               scheduled_at=when.isoformat(timespec="seconds"), text=text,
                               group="", images=self.moment_images, status=store.STATUS_PLANNED, last_error="")
-                plan = store.update_plan(self.current_plan["id"], **fields) if self.current_plan else \
+                plan = store.update_plan_if_editable(self.current_plan["id"], **fields) if self.current_plan else \
                     store.create_plan(account_id, store.KIND_MOMENT, when, text,
                                       images=self.moment_images, source="manual")
                 copied = self._copy_plan_images(account_id, plan["id"], self.moment_images)
                 if copied:
-                    plan = store.update_plan(plan["id"], images=copied)
+                    plan = store.update_plan_if_editable(plan["id"], images=copied)
                     self.moment_images = copied
 
             self.current_plan = plan
@@ -739,6 +753,45 @@ class App(tk.Tk):
         if ok:
             self._set_busy(True)
         (messagebox.showinfo if ok else messagebox.showwarning)("发布", msg)
+        self._refresh_auto_list()
+
+    def confirm_plan_sent(self):
+        if not self.current_plan:
+            messagebox.showinfo("提示", "先选中一条计划")
+            return
+        if self.current_plan.get("status") != store.STATUS_NEEDS_REVIEW:
+            messagebox.showinfo("提示", "这条计划不是待核实状态")
+            return
+        if not messagebox.askyesno("确认已发送", "确认这条内容已经在微信里发出去了吗？"):
+            return
+        store.update_plan(
+            self.current_plan["id"],
+            status=store.STATUS_SENT,
+            sent_at=store.now_local().isoformat(timespec="seconds"),
+            last_error="",
+        )
+        store.log("INFO", f"人工确认已发送：{self.current_plan['id']}")
+        self._refresh_auto_list()
+
+    def confirm_plan_not_sent(self):
+        if not self.current_plan:
+            messagebox.showinfo("提示", "先选中一条计划")
+            return
+        if self.current_plan.get("status") != store.STATUS_NEEDS_REVIEW:
+            messagebox.showinfo("提示", "这条计划不是待核实状态")
+            return
+        if not messagebox.askyesno(
+            "确认未发送",
+            "确认这条内容没有发出去吗？\n\n确认后会重新排队，可能再次发送，请先检查微信。",
+        ):
+            return
+        store.update_plan(
+            self.current_plan["id"],
+            status=store.STATUS_PLANNED,
+            next_retry_at="",
+            last_error="人工确认未发送，已重新排队",
+        )
+        store.log("WARNING", f"人工确认未发送，重新排队：{self.current_plan['id']}")
         self._refresh_auto_list()
 
     def delete_current_plan(self):
@@ -859,7 +912,7 @@ class App(tk.Tk):
             if not text:
                 raise ValueError("消息不能为空")
             if self.current_group_plan:
-                plan = store.update_plan(self.current_group_plan["id"], account_id=account_id,
+                plan = store.update_plan_if_editable(self.current_group_plan["id"], account_id=account_id,
                                          scheduled_at=when.isoformat(timespec="seconds"), group=group,
                                          text=text, status=store.STATUS_PLANNED, last_error="")
             else:
@@ -934,6 +987,7 @@ class App(tk.Tk):
             ("账号与角色", "设置运营账号 / 机器人账号、wxid、群名", "accounts"),
             ("API 设置", "客户自己的 DeepSeek Key、模型", "settings"),
             ("机器人人设", "人设内容、保存、测试", "persona"),
+            ("AI 群聊", "普通消息回复概率；@ 机器人固定 100%", "listener"),
             ("测试", "测试发群消息、测试发朋友圈、测试人设", "test"),
         ):
             row = tk.Frame(card, bg=p["card2"], highlightbackground=p["line"], highlightthickness=1)
@@ -1127,6 +1181,91 @@ class App(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
+    # ---------- developer: AI chat listener ----------
+    def _build_listener_settings(self, parent):
+        p = self.p
+        frame = tk.Frame(parent, bg=p["bg"])
+        card = self._card(frame)
+        card.pack(fill="x")
+        tk.Label(card, text="AI 群聊回复", bg=p["card"], fg=p["text"],
+                 font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 2))
+        tk.Label(card, text="@ 机器人固定 100% 回复；普通消息按下面的概率随机回复。",
+                 bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w", padx=18)
+        nr = tk.Frame(card, bg=p["card"])
+        nr.pack(fill="x", padx=18, pady=(10, 4))
+        tk.Label(nr, text="机器人昵称", bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(side="left")
+        self.l_nickname = ttk.Entry(nr, width=18)
+        self.l_nickname.pack(side="left", padx=8)
+        tk.Label(nr, text="普通消息回复概率", bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(side="left", padx=(18, 0))
+        self.l_prob_scale = ttk.Scale(nr, from_=0, to=100, orient="horizontal", length=170,
+                                      command=self._probability_scale)
+        self.l_prob_scale.pack(side="left", padx=(8, 4))
+        self.l_probability = ttk.Spinbox(nr, from_=0, to=100, increment=5, width=5,
+                                         command=self._probability_text)
+        self.l_probability.pack(side="left", padx=4)
+        self.l_probability.bind("<KeyRelease>", self._probability_text)
+        self.l_probability.bind("<FocusOut>", self._probability_text)
+        tk.Label(nr, text="%", bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(side="left")
+        self.l_reply_all = tk.BooleanVar(value=False)
+        tk.Checkbutton(card, text="回复所有消息（测试，100%）", variable=self.l_reply_all,
+                       bg=p["card"], fg=p["text"], selectcolor=p["card"],
+                       activebackground=p["card"], activeforeground=p["text"],
+                       font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=16, pady=(6, 2))
+        self.l_no_emotion = tk.BooleanVar(value=False)
+        tk.Checkbutton(card, text="无感情人设（人机测试）", variable=self.l_no_emotion,
+                       bg=p["card"], fg=p["text"], selectcolor=p["card"],
+                       activebackground=p["card"], activeforeground=p["text"],
+                       font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=16, pady=(0, 2))
+        tk.Label(card, text="开启后 AI 会改用机械、简短、无情绪的表达，用于人机测试。",
+                 bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w", padx=18, pady=(0, 6))
+        tk.Label(card, text="示例：概率 30% 表示普通消息约三成会回；@ 机器人不受概率限制。",
+                 bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w", padx=18, pady=(2, 8))
+        self._btn(card, "保存 AI 群聊设置", self.save_listener_settings, "primary").pack(anchor="w", padx=18, pady=(4, 16))
+        return frame
+
+    def _refresh_listener_settings(self):
+        b = store.load_config().get("bot", {}) or {}
+        self.l_nickname.delete(0, "end")
+        self.l_nickname.insert(0, b.get("nickname", "雨后彩虹"))
+        self.l_probability.delete(0, "end")
+        self.l_probability.insert(0, str(b.get("reply_probability", 30)))
+        self.l_prob_scale.set(int(b.get("reply_probability", 30) or 0))
+        self.l_reply_all.set(bool(b.get("reply_all", False)))
+        self.l_no_emotion.set(bool(b.get("no_emotion", False)))
+
+    def _probability_scale(self, value=None):
+        try:
+            v = max(0, min(100, int(round(float(value)))))
+        except Exception:
+            return
+        self.l_probability.delete(0, "end")
+        self.l_probability.insert(0, str(v))
+
+    def _probability_text(self, _e=None):
+        try:
+            v = max(0, min(100, int(self.l_probability.get() or 0)))
+        except Exception:
+            return
+        self.l_prob_scale.set(v)
+
+    def save_listener_settings(self):
+        try:
+            prob = max(0, min(100, int(self.l_probability.get() or 0)))
+        except Exception:
+            prob = 30
+        cfg = store.load_config()
+        b = cfg.setdefault("bot", {})
+        b["nickname"] = self.l_nickname.get().strip() or "雨后彩虹"
+        b["reply_probability"] = prob
+        b["reply_all"] = bool(self.l_reply_all.get())
+        b["no_emotion"] = bool(self.l_no_emotion.get())
+        store.save_config(cfg)
+        self._refresh_bot()
+        if self.wx_bot_running:
+            self.stop_listener()
+            self.start_listener()
+        messagebox.showinfo("已保存", "AI 群聊回复概率已保存。@ 机器人仍固定 100%。")
+
     # ---------- normal settings ----------
     def _build_prefs(self, parent):
         p = self.p
@@ -1318,7 +1457,31 @@ class App(tk.Tk):
         wxbar = tk.Frame(main, bg=p["card"])
         wxbar.pack(fill="x", padx=16, pady=(0, 4))
         self._btn(wxbar, "发送到微信群", self.send_wx_current, "primary").pack(side="left")
-        self._btn(wxbar, "AI 生成并发送", self.ai_send_wx, "ghost").pack(side="left", padx=8)
+        self._btn(wxbar, "AI 生成草稿", self.ai_send_wx, "ghost").pack(side="left", padx=8)
+
+        listen = self._card(frame)
+        listen.pack(fill="x", pady=(10, 0))
+        tk.Label(listen, text="AI 群聊监听（测试）", bg=p["card"], fg=p["text"],
+                 font=("Microsoft YaHei UI", 10, "bold")).pack(anchor="w", padx=16, pady=(10, 2))
+        tk.Label(listen, text="用 Windows OCR 读取当前群最后一条消息；测试阶段只对 @、昵称或“回复所有”触发。",
+                 bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w", padx=16)
+        lr = tk.Frame(listen, bg=p["card"])
+        lr.pack(fill="x", padx=16, pady=(8, 4))
+        tk.Label(lr, text="机器人昵称", bg=p["card"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(side="left")
+        self.bot_nickname = ttk.Entry(lr, width=16)
+        self.bot_nickname.pack(side="left", padx=6)
+        self.reply_all_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(lr, text="回复所有消息", variable=self.reply_all_var,
+                       command=self._listener_option_changed,
+                       bg=p["card"], fg=p["text"], selectcolor=p["card"],
+                       activebackground=p["card"], activeforeground=p["text"],
+                       font=("Microsoft YaHei UI", 8)).pack(side="left", padx=8)
+        self.bot_listen_btn = self._btn(lr, "开始监听", self.toggle_listener, "primary")
+        self.bot_listen_btn.pack(side="left", padx=6)
+        self.bot_listen_status = tk.Label(listen, text="未监听", bg=p["card"], fg=p["muted"],
+                                          font=("Microsoft YaHei UI", 8), wraplength=760, justify="left")
+        self.bot_listen_status.pack(anchor="w", padx=16, pady=(0, 8))
+        self.chat_listener = None
 
         self.wx_bot_running = False
         self._refresh_bot()
@@ -1327,6 +1490,7 @@ class App(tk.Tk):
     def toggle_wechat_bot(self):
         if self.wx_bot_running:
             self.wx_bot_running = False
+            self.stop_listener()
             self._refresh_bot()
             return
         bot = store.bot_account()
@@ -1337,6 +1501,55 @@ class App(tk.Tk):
             return
         self.wx_bot_running = True
         self._refresh_bot()
+        if (store.load_config().get("bot", {}) or {}).get("listen_auto", True):
+            self.start_listener()
+
+    def toggle_listener(self):
+        if self.chat_listener:
+            self.stop_listener()
+        else:
+            self.start_listener()
+
+    def _listener_option_changed(self):
+        if self.chat_listener:
+            self.stop_listener()
+            self.start_listener()
+
+    def start_listener(self):
+        if self.chat_listener:
+            return
+        bot = store.bot_account()
+        if not bot:
+            messagebox.showwarning("没有机器人账号", "请先设置机器人账号。")
+            return
+        hwnd = self._hwnd_for(bot)
+        if not hwnd:
+            messagebox.showwarning("没有绑定窗口", "请先在账号页给机器人账号选择微信窗口。")
+            return
+        cfg = store.load_config()
+        b = cfg.setdefault("bot", {})
+        b["nickname"] = self.bot_nickname.get().strip() or "雨后彩虹"
+        b["reply_all"] = bool(self.reply_all_var.get())
+        store.save_config(cfg)
+        self.chat_listener = GroupChatListener(
+            self,
+            hwnd,
+            b["nickname"],
+            b["reply_all"],
+            float(b.get("listen_seconds", 4) or 4),
+            int(b.get("reply_probability", 30) or 0),
+        )
+        self.chat_listener.start()
+        self.bot_listen_btn.configure(text="停止监听")
+        self.bot_listen_status.configure(text="监听中…")
+
+    def stop_listener(self):
+        if self.chat_listener:
+            self.chat_listener.stop()
+            self.chat_listener = None
+        if hasattr(self, "bot_listen_btn"):
+            self.bot_listen_btn.configure(text="开始监听")
+            self.bot_listen_status.configure(text="未监听")
 
     def _bot_wechat_ready(self) -> bool:
         accounts = store.load_accounts()
@@ -1370,6 +1583,13 @@ class App(tk.Tk):
         else:
             self.bot_status_label.configure(text="未启动", fg=self.p["muted"])
             self.bot_run_btn.configure(text="启动微信机器人")
+        cfg_bot = store.load_config().get("bot", {}) or {}
+        if hasattr(self, "bot_nickname"):
+            self.bot_nickname.delete(0, "end")
+            self.bot_nickname.insert(0, cfg_bot.get("nickname", "雨后彩虹"))
+        if hasattr(self, "reply_all_var"):
+            self.reply_all_var.set(bool(cfg_bot.get("reply_all", False)))
+
 
     def open_robot_console(self):
         if self.robot_console_win and self.robot_console_win.winfo_exists():
@@ -1414,15 +1634,15 @@ class App(tk.Tk):
         self.after(1000, self._robot_console_tick)
 
     def _hwnd_for(self, account: dict | None):
-        try:
-            h = int((account or {}).get("wechat_hwnd") or 0)
-        except Exception:
+        if not account:
             return None
+        h = int(self.window_bindings.get(account.get("id", ""), 0) or 0)
         if h <= 0:
             return None
         for w in enum_windows():
             if w.hwnd == h and w.title == "微信":
                 return h
+        self.window_bindings.pop(account.get("id", ""), None)
         return None
 
     def _active_wechat_account(self) -> dict | None:
@@ -1543,37 +1763,42 @@ class App(tk.Tk):
             return
         if not self._selected_wechat_ready():
             return
-        if not messagebox.askyesno("AI 回复并发送", "用当前人设生成回复，并发送到当前微信群？"):
-            return
         persona = self.b_persona_text.get("1.0", "end-1c").strip()
-        cfg = store.load_config()
-        cfg.setdefault("group", {})["mode"] = "current"
-        cfg.update(cfg.get("wechat", {}) or {})
-        account = self._active_wechat_account()
 
         def work():
             self.after(0, self._set_busy, True)
             try:
+                cfg = store.load_config()
+                if (cfg.get("bot", {}) or {}).get("no_emotion", False):
+                    system = (
+                        "你是一个没有情绪的人机测试助手。只陈述事实、结论和必要步骤，"
+                        "不使用表情、感叹、寒暄或情绪词。回答简短、机械、直接。"
+                    )
+                else:
+                    system = persona or "你是烘焙助手，回答简短自然。"
                 answer = self.ai.chat([
-                    {"role": "system", "content": persona or "你是烘焙助手，回答简短自然。"},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": question},
-                ])
-                self.after(0, lambda: (self.b_wx_text.delete("1.0", "end"), self.b_wx_text.insert("1.0", answer)))
-                store.robot_event("AI生成", answer)
-                GATE.begin_robot()
-                try:
-                    GroupUI(cfg, hwnd=self._hwnd_for(account)).send_current(answer)
-                finally:
-                    GATE.end_robot()
-                store.robot_event("AI已发送", answer, True)
-                self.after(0, lambda: messagebox.showinfo("已发送", "AI 回复已发送到当前微信群。"))
+                ]).strip()
+                if not answer:
+                    raise RuntimeError("AI 没有返回有效内容")
+                store.robot_event("AI生成草稿", answer)
+                self.after(0, lambda a=answer: self._show_ai_draft(a))
             except Exception as exc:
                 err = str(exc)
-                self.after(0, lambda e=err: messagebox.showerror("发送失败", e))
+                self.after(0, lambda e=err: messagebox.showerror("AI 生成失败", e))
             finally:
                 self.after(0, self._set_busy, False)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _show_ai_draft(self, answer: str) -> None:
+        self.b_wx_text.delete("1.0", "end")
+        self.b_wx_text.insert("1.0", answer)
+        messagebox.showinfo(
+            "AI 草稿已生成",
+            "请检查内容、价格、库存与承诺事项。确认无误后点击「发送到微信群」。",
+        )
 
     def save_persona(self):
         name = self.b_persona_name.get().strip()
@@ -1674,7 +1899,7 @@ class App(tk.Tk):
                      font=("Microsoft YaHei UI", 11, "bold")).pack(side="left")
             tk.Label(head, text=f"ID: {a['id']}", bg=p["card"], fg=p["muted"],
                      font=("Microsoft YaHei UI", 8)).pack(side="left", padx=8)
-            hwnd = a.get("wechat_hwnd")
+            hwnd = self.window_bindings.get(a["id"])
             tk.Label(head, text=("窗口已绑定" if hwnd else "窗口未绑定"), bg=p["card"],
                      fg=p["green"] if hwnd else p["muted"],
                      font=("Microsoft YaHei UI", 8)).pack(side="left", padx=4)
@@ -1753,38 +1978,54 @@ class App(tk.Tk):
         self._refresh_header()
 
     def bind_wechat_window(self, account_id: str):
-        wins = [w for w in enum_windows()
-                if w.title == "微信" and w.cls.startswith("Qt") and w.rect.width >= 600 and w.rect.height >= 500]
-        if not wins:
-            messagebox.showwarning("绑定失败", "没有检测到微信主窗口。")
-            return
-        if len(wins) == 1:
-            self._save_window_binding(account_id, wins[0].hwnd)
+        account = next((a for a in self.accounts if a.get("id") == account_id), None)
+        if not account:
             return
         p = self.p
         win = tk.Toplevel(self)
-        win.title("选择微信窗口")
-        win.geometry("420x300")
+        win.title(i18n.tr("选择微信窗口"))
+        win.geometry("520x280")
         win.configure(bg=p["bg"])
-        tk.Label(win, text="检测到多个微信窗口，选择这个账号对应的窗口：", bg=p["bg"], fg=p["text"],
-                 font=("Microsoft YaHei UI", 10)).pack(anchor="w", padx=16, pady=(14, 8))
-        for i, w in enumerate(wins, 1):
-            text = f"微信窗口 {i}（{w.rect.left}, {w.rect.top}）"
-            self._btn(win, text, lambda h=w.hwnd: (self._save_window_binding(account_id, h), win.destroy()),
-                      "ghost").pack(fill="x", padx=16, pady=4)
-        tk.Label(win, text="提示：两个窗口分别登录运营号和机器人号，各自绑定一次。",
-                 bg=p["bg"], fg=p["muted"], font=("Microsoft YaHei UI", 8)).pack(anchor="w", padx=16, pady=8)
+        tk.Label(win, text=i18n.tr("绑定微信窗口"), bg=p["bg"], fg=p["text"],
+                 font=("Microsoft YaHei UI", 12, "bold")).pack(anchor="w", padx=18, pady=(16, 4))
+        tk.Label(win, text=f"{i18n.tr('账号：')}{i18n.display_account(account.get('name'))}", bg=p["bg"], fg=p["text"],
+                 font=("Microsoft YaHei UI", 10)).pack(anchor="w", padx=18)
+        tk.Label(win, text=f"{i18n.tr('微信号：')}{account.get('wxid') or i18n.tr('未填写')}", bg=p["bg"], fg=p["muted"],
+                 font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18, pady=(0, 8))
+        tk.Label(win, text=i18n.tr("点“开始选择”后，5 秒内点一下这个微信号登录的微信窗口。\n窗口绑定只在本次运行有效，关闭软件后不保存。"),
+                 bg=p["bg"], fg=p["muted"], justify="left", font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18, pady=(0, 10))
+        status = tk.Label(win, text="", bg=p["bg"], fg=p["accent"], font=("Microsoft YaHei UI", 9))
+        status.pack(anchor="w", padx=18)
+
+        def begin():
+            remaining = 5
+
+            def tick():
+                nonlocal remaining
+                if remaining <= 0:
+                    hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    title = ctypes.create_unicode_buffer(256)
+                    cls = ctypes.create_unicode_buffer(128)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, title, 256)
+                    ctypes.windll.user32.GetClassNameW(hwnd, cls, 128)
+                    if title.value != "微信" or not cls.value.startswith("Qt"):
+                        messagebox.showwarning("绑定失败", "没有读取到微信窗口。请重新选择，并在 5 秒内点击目标微信窗口。")
+                        return
+                    self._save_window_binding(account_id, hwnd)
+                    win.destroy()
+                    return
+                status.configure(text=i18n.tr_runtime(f"请在 {remaining} 秒内点击目标微信窗口…"))
+                remaining -= 1
+                win.after(1000, tick)
+
+            tick()
+
+        self._btn(win, i18n.tr("开始选择"), begin, "primary").pack(anchor="w", padx=18, pady=(6, 8))
 
     def _save_window_binding(self, account_id: str, hwnd: int):
-        self.accounts = store.load_accounts()
-        for a in self.accounts:
-            if a.get("id") == account_id:
-                a["wechat_hwnd"] = str(hwnd)
-                break
-        store.save_accounts(self.accounts)
-        self.accounts = store.load_accounts()
+        self.window_bindings[account_id] = hwnd
         self._refresh_account_cards()
-        messagebox.showinfo("已绑定", f"已绑定微信窗口 HWND {hwnd}。\n重启微信后需要重新绑定。")
+        messagebox.showinfo("已绑定", "本次运行已绑定该微信窗口。\n关闭软件后窗口绑定会清空，需要重新选择。")
 
     def save_accounts(self):
         try:
@@ -2006,10 +2247,56 @@ class App(tk.Tk):
             self.scheduler.pause()
         self._tick()
 
+    def _save_before_exit(self):
+        cfg = store.load_config()
+        if hasattr(self, "s_key"):
+            key = self.s_key.get().strip()
+            if key:
+                store.save_api_key(key)
+            if hasattr(self, "s_base"):
+                cfg.setdefault("ai", {})["base_url"] = self.s_base.get().strip() or "https://api.deepseek.com"
+            if hasattr(self, "s_model"):
+                cfg["ai"]["model"] = self.s_model.get().strip() or "deepseek-chat"
+        cfg.setdefault("ui", {})["theme"] = self.theme_name
+        if hasattr(self, "p_theme"):
+            try:
+                if self.p_theme.current() in (0, 1):
+                    cfg["ui"]["theme"] = "dark" if self.p_theme.current() == 1 else "light"
+            except Exception:
+                pass
+        if hasattr(self, "p_group_mode"):
+            try:
+                if self.p_group_mode.current() in (0, 1):
+                    cfg.setdefault("group", {})["mode"] = "search" if self.p_group_mode.current() == 1 else "current"
+            except Exception:
+                pass
+        if hasattr(self, "p_settle"):
+            try:
+                cfg["image_settle_seconds"] = max(1, min(20, int(self.p_settle.get() or 4)))
+            except Exception:
+                pass
+        if hasattr(self, "p_wait"):
+            try:
+                cfg["publish_wait_seconds"] = max(10, min(120, int(self.p_wait.get() or 35)))
+            except Exception:
+                pass
+        if hasattr(self, "p_start_min"):
+            cfg.setdefault("startup", {})["minimize"] = bool(self.p_start_min.get())
+        store.save_config(cfg)
+
     def _close(self):
-        if messagebox.askyesno("退出", "退出后定时发布将停止，确定吗？"):
-            self.scheduler.stop()
-            self.destroy()
+        choice = messagebox.askyesnocancel(
+            "退出",
+            "退出前保存 API 和设置吗？\n\n是：保存\n否：不保存\n取消：不退出",
+        )
+        if choice is None:
+            return
+        if choice:
+            self._save_before_exit()
+        self.stop_listener()
+        self.scheduler.stop()
+        self.window_bindings.clear()
+        self.destroy()
 
 
 def _single_instance() -> bool:

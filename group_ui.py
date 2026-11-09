@@ -127,6 +127,10 @@ class GroupUI:
                 time.sleep(0.2)
                 got = self.wx._get_clipboard()
                 if marker in got:
+                    # 验证完立刻清掉标记，绝不能让标记留在输入框里被发出去。
+                    self.wx._chord([0x11], 0x41)
+                    self.wx._tap(0x2E)
+                    time.sleep(0.15)
                     return True
                 self._close_popups(main)
                 self.wx._force_foreground(main.hwnd)
@@ -147,8 +151,8 @@ class GroupUI:
     def send_current(self, text: str, screenshot: bool = True) -> Path | None:
         if not text.strip():
             raise ValueError("消息不能为空")
-        if (self.cfg.get("group", {}) or {}).get("background", True):
-            return self.send_current_background(text, screenshot=screenshot)
+        if (self.cfg.get("group", {}) or {}).get("background", False):
+            raise RuntimeError("后台发送属于实验性功能，当前版本已禁用；请关闭后台模式并使用前台发送。")
         main = self._focus()
         r = _get_rect(main.hwnd)
         try:
@@ -287,7 +291,9 @@ class GroupUI:
         self.wx._chord([0x11], 0x43)
         time.sleep(0.2)
         got = self.wx._get_clipboard().strip()
-        if got != clean:
+        norm_got = "".join(got.split())
+        norm_clean = "".join(clean.split())
+        if not norm_got or not (norm_got == norm_clean or norm_clean.startswith(norm_got) or norm_got.startswith(norm_clean[:80])):
             raise RuntimeError("文字没有进入微信输入框，已中止，未发送")
         self.wx._tap(0x27)  # Right：取消全选，光标到末尾
         send_pt = self._find_green_send(r)

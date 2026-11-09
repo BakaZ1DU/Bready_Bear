@@ -33,6 +33,8 @@ STATUS_SENT = "sent"
 STATUS_FAILED = "failed"
 STATUS_SKIPPED = "skipped"
 STATUS_CANCELED = "canceled"
+STATUS_NEEDS_REVIEW = "needs_review"
+STATUS_WAITING_CONFIRMATION = "waiting_confirmation"
 
 STATUS_LABELS = {
     STATUS_PLANNED: "待发布",
@@ -42,6 +44,8 @@ STATUS_LABELS = {
     STATUS_FAILED: "失败",
     STATUS_SKIPPED: "已跳过",
     STATUS_CANCELED: "已取消",
+    STATUS_NEEDS_REVIEW: "待人工核实",
+    STATUS_WAITING_CONFIRMATION: "等待人工确认",
 }
 
 KIND_MOMENT = "moment"
@@ -97,6 +101,12 @@ def load_config() -> dict:
         "bot": {
             "persona_name": "烘焙助手",
             "persona": "你是烘焙店的 AI 助手，说话自然、简短、专业，先回答问题再给一个可执行的小建议。",
+            "nickname": "雨后彩虹",
+            "reply_all": False,
+            "reply_probability": 30,
+            "no_emotion": False,
+            "listen_seconds": 4,
+            "listen_auto": True,
         },
         "scheduler": {
             "check_seconds": 5,
@@ -150,7 +160,12 @@ def load_accounts() -> list[dict]:
 
 
 def save_accounts(accounts: list[dict]) -> None:
-    _write_json(ACCOUNTS_PATH, accounts)
+    clean = []
+    for a in accounts:
+        item = dict(a)
+        item.pop("wechat_hwnd", None)  # 窗口句柄只在本次运行有效，不落盘
+        clean.append(item)
+    _write_json(ACCOUNTS_PATH, clean)
 
 
 def selected_account_id(accounts: list[dict] | None = None) -> str:
@@ -317,14 +332,56 @@ def delete_plan(plan_id: str) -> bool:
         return True
 
 
+def claim_plan(plan_id: str, *, manual_confirmed: bool = False) -> dict | None:
+    """原子认领计划，避免定时器与“立即发送”重复执行。"""
+    allowed = {STATUS_PLANNED, STATUS_WAITING}
+    if manual_confirmed:
+        allowed.add(STATUS_WAITING_CONFIRMATION)
+
+    with _lock:
+        plans = _load_plans()
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            if p.get("status") not in allowed:
+                return None
+            p["status"] = STATUS_PUBLISHING
+            p["last_error"] = ""
+            p["next_retry_at"] = ""
+            _save_plans(plans)
+            return dict(p)
+    return None
+
+
+def update_plan_if_editable(plan_id: str, **fields) -> dict:
+    """只允许修改尚未开始发送的任务，检查和写入保持原子性。"""
+    allowed = {STATUS_PLANNED, STATUS_WAITING, STATUS_WAITING_CONFIRMATION}
+    with _lock:
+        plans = _load_plans()
+        for p in plans:
+            if p.get("id") != plan_id:
+                continue
+            if p.get("status") not in allowed:
+                raise ValueError("任务已执行或待核实，不能直接修改")
+            p.update(fields)
+            _save_plans(plans)
+            return dict(p)
+    raise ValueError("任务不存在")
+
+
 def reset_interrupted() -> int:
+    """重启时将中断任务改为待人工核实，不自动重发。"""
     with _lock:
         plans = _load_plans()
         n = 0
         for p in plans:
             if p.get("status") == STATUS_PUBLISHING:
-                p["status"] = STATUS_PLANNED
-                p["last_error"] = "上次发布中断，已恢复"
+                p["status"] = STATUS_NEEDS_REVIEW
+                p["last_error"] = (
+                    "程序在发送过程中退出；请先查看微信是否已经发送，"
+                    "核实前不要重复发布。"
+                )
+                p["next_retry_at"] = ""
                 n += 1
         if n:
             _save_plans(plans)

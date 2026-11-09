@@ -20,6 +20,7 @@ class Scheduler:
         self._lock = threading.Lock()
         self.last_error = ""
         self.busy_plan = ""
+        self.window_bindings: dict[str, int] = {}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -63,13 +64,14 @@ class Scheduler:
         return cfg
 
     def _has_window(self, account: dict) -> bool:
-        try:
-            h = int(account.get("wechat_hwnd") or 0)
-        except Exception:
-            return False
+        h = int(self.window_bindings.get(account.get("id", ""), 0) or 0)
         if h <= 0:
             return False
         return any(w.hwnd == h and w.title == "微信" for w in enum_windows())
+
+    def _hwnd(self, account: dict) -> int | None:
+        h = int(self.window_bindings.get(account.get("id", ""), 0) or 0)
+        return h or None
 
     def _process(self, plan: dict) -> None:
         accounts = store.load_accounts()
@@ -102,55 +104,75 @@ class Scheduler:
             return
         if plan.get("status") == store.STATUS_WAITING:
             store.update_plan(plan["id"], status=store.STATUS_PLANNED, last_error="")
-        with self._lock:
-            self._do_publish(plan, account)
-
-    def _do_publish(self, plan: dict, account: dict) -> None:
-        pid = plan["id"]
-        if not GATE.begin_auto():
-            store.update_plan(pid, status=store.STATUS_PLANNED,
-                              last_error="机器人正在回复，自动发送已让路",
-                              next_retry_at=(store.now_local() + timedelta(seconds=30)).isoformat(timespec="seconds"))
-            store.log("INFO", "机器人优先，自动发送推迟")
-            return
-        self.busy_plan = pid
-        store.update_plan(pid, status=store.STATUS_PUBLISHING, last_error="")
-        store.log("INFO", f"开始执行：{account.get('name')} / {store.KIND_LABELS.get(plan.get('kind'), plan.get('kind'))}")
-        try:
-            if plan.get("kind") == store.KIND_MOMENT:
-                cfg = self._wechat_cfg()
-                images = [Path(p) for p in plan.get("images", [])]
-                if not images:
-                    raise AutomationError("朋友圈没有图片")
-                WeChatUI(cfg, logger=store.log, hwnd=account.get("wechat_hwnd")).publish(
-                    plan.get("text", ""), images, preview_only=False, post_id=pid
+        if plan.get("kind") == store.KIND_GROUP:
+            mode = (self.cfg.get("group", {}) or {}).get("mode", "current")
+            if mode == "current":
+                store.update_plan(
+                    plan["id"],
+                    status=store.STATUS_WAITING_CONFIRMATION,
+                    last_error="当前聊天模式无法验证目标群。请手动打开目标群并核对后，再点击立即发送。",
                 )
-            elif plan.get("kind") == store.KIND_GROUP:
-                group = (plan.get("group") or account.get("group_name") or "").strip()
-                if not group:
-                    raise AutomationError("没有配置群名称")
-                GroupUI(self._wechat_cfg(), hwnd=account.get("wechat_hwnd")).send(group, plan.get("text", ""))
-            else:
-                raise AutomationError("未知计划类型")
-            store.update_plan(pid, status=store.STATUS_SENT,
-                              sent_at=store.now_local().isoformat(timespec="seconds"), last_error="")
-            store.log("INFO", f"执行成功：{account.get('name')} / {pid}")
-        except Exception as exc:
-            msg = str(exc)
-            self.last_error = msg
-            attempts = int(plan.get("attempts", 0)) + 1
-            max_retries = int(self.cfg.get("scheduler", {}).get("max_retries", 2) or 0)
-            retryable = ("照片未发送" not in msg) and ("无法确认" not in msg)
-            store.log("ERROR", f"执行失败：{msg}")
-            if attempts <= max_retries and retryable:
-                delay = int(self.cfg.get("scheduler", {}).get("retry_delay_minutes", 10) or 10)
-                retry_at = (store.now_local() + timedelta(minutes=delay)).isoformat(timespec="seconds")
-                store.update_plan(pid, status=store.STATUS_PLANNED, attempts=attempts,
-                                  last_error=f"第 {attempts} 次失败：{msg}", next_retry_at=retry_at)
-                store.log("WARNING", f"{delay} 分钟后重试")
-            else:
-                store.update_plan(pid, status=store.STATUS_FAILED, attempts=attempts,
-                                  last_error=f"失败：{msg}")
+                store.log("WARNING", f"群任务等待人工确认：{plan['id']}")
+                return
+        with self._lock:
+            self._do_publish(plan, account, manual_confirmed=False)
+
+    def _do_publish(self, plan: dict, account: dict, *, manual_confirmed: bool = False) -> None:
+        pid = plan["id"]
+
+        # 先取得全局微信 UI 操作权限；占用时保留原状态，稍后再试。
+        if not GATE.begin_auto():
+            store.log("INFO", f"微信忙碌，任务 {pid} 保留原状态")
+            return
+
+        try:
+            claimed = store.claim_plan(pid, manual_confirmed=manual_confirmed)
+            if claimed is None:
+                store.log("INFO", f"任务 {pid} 已被执行或状态不再允许发送")
+                return
+
+            self.busy_plan = pid
+            store.log("INFO", f"开始执行任务：{pid}")
+
+            try:
+                if claimed.get("kind") == store.KIND_MOMENT:
+                    cfg = self._wechat_cfg()
+                    images = [Path(p) for p in claimed.get("images", [])]
+                    if not images:
+                        raise AutomationError("朋友圈没有图片")
+                    WeChatUI(cfg, logger=store.log, hwnd=self._hwnd(account)).publish(
+                        claimed.get("text", ""), images, preview_only=False, post_id=pid
+                    )
+                elif claimed.get("kind") == store.KIND_GROUP:
+                    group = (claimed.get("group") or account.get("group_name") or "").strip()
+                    if not group:
+                        raise AutomationError("没有配置群名称")
+                    GroupUI(self._wechat_cfg(), hwnd=self._hwnd(account)).send(
+                        group, claimed.get("text", "")
+                    )
+                else:
+                    raise AutomationError("未知计划类型")
+
+                store.update_plan(
+                    pid,
+                    status=store.STATUS_SENT,
+                    sent_at=store.now_local().isoformat(timespec="seconds"),
+                    last_error="",
+                )
+                store.log("INFO", f"任务完成：{pid}")
+            except Exception as exc:
+                msg = str(exc)
+                self.last_error = msg
+                attempts = int(claimed.get("attempts", 0)) + 1
+                # 失败阶段未可靠分类前一律转人工核实，绝不自动重发。
+                store.update_plan(
+                    pid,
+                    status=store.STATUS_NEEDS_REVIEW,
+                    attempts=attempts,
+                    last_error=f"执行异常，请核实是否已发送：{msg}",
+                    next_retry_at="",
+                )
+                store.log("ERROR", f"任务 {pid} 待核实：{msg}")
         finally:
             self.busy_plan = ""
             GATE.end_auto()
@@ -159,8 +181,15 @@ class Scheduler:
         plan = store.get_plan(plan_id)
         if not plan:
             return False, "计划不存在"
-        if plan.get("status") in (store.STATUS_SENT, store.STATUS_PUBLISHING):
-            return False, "已发布或正在发布"
+        if plan.get("status") == store.STATUS_NEEDS_REVIEW:
+            return False, "任务发送结果不确定，请先在微信中核实"
+        allowed_statuses = {
+            store.STATUS_PLANNED,
+            store.STATUS_WAITING,
+            store.STATUS_WAITING_CONFIRMATION,
+        }
+        if plan.get("status") not in allowed_statuses:
+            return False, "当前任务状态不允许立即发送"
         accounts = store.load_accounts()
         account = store.account_by_id(accounts, plan.get("account_id", ""))
         if not account:
@@ -178,8 +207,13 @@ class Scheduler:
             store.update_plan(plan_id, status=store.STATUS_WAITING,
                               last_error=f"请切换到 {account.get('name')}（当前：{store.active_hint(accounts)}）")
             return False, f"当前是「{store.active_hint(accounts)}」，请切换到「{account.get('name')}」"
-        threading.Thread(target=lambda: self._do_publish(plan, account), daemon=True).start()
-        return True, "已开始发布"
+        threading.Thread(
+            target=self._do_publish,
+            args=(plan, account),
+            kwargs={"manual_confirmed": True},
+            daemon=True,
+        ).start()
+        return True, "已提交立即发送请求；请在任务列表确认最终结果"
 
     def send_group_now(self, account_id: str, group: str, text: str) -> tuple[bool, str]:
         accounts = store.load_accounts()
@@ -213,7 +247,7 @@ class Scheduler:
             store.log("WARNING", "机器人优先，手动群消息未发送")
             return
         try:
-            GroupUI(self._wechat_cfg(), hwnd=account.get("wechat_hwnd")).send(group, text)
+            GroupUI(self._wechat_cfg(), hwnd=self._hwnd(account)).send(group, text)
             store.log("INFO", f"群消息发送成功：{account.get('name')}")
         except Exception as exc:
             self.last_error = str(exc)
